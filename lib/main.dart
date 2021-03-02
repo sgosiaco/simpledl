@@ -1,11 +1,14 @@
+import 'dart:async';
 import 'dart:io';
-import 'package:http/http.dart' as http;
+//import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:ext_storage/ext_storage.dart';
 import 'package:path/path.dart' as p;
-import 'package:audiotagger/audiotagger.dart';
+import 'package:flutter_ffmpeg/flutter_ffmpeg.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
+import 'package:safe_filename/safe_filename.dart' as SafeFilename;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,8 +38,9 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  StreamSubscription _intentDataStreamSubscription;
   final yt = YoutubeExplode();
-  final tagger = Audiotagger();
+  final ffmpeg = FlutterFFmpeg();
   TextEditingController _urlController;
   Video _video;
   double _progress = 0;
@@ -45,10 +49,34 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _urlController = TextEditingController();
+
+    _intentDataStreamSubscription = ReceiveSharingIntent.getTextStream().listen((value) async {
+      if (value != null) {
+        final video =  await yt.videos.get(value);
+        setState(() {
+          _urlController.text = value;
+          _video = video;
+        });
+      }
+    }, onError: (err) {
+      print('Error $err');
+    });
+
+    ReceiveSharingIntent.getInitialText().then((value) async {
+      if (value != null) {
+        final video =  await yt.videos.get(value);
+        setState(() {
+          _urlController.text = value;
+          _video = video;
+        });
+      }
+    });
+
   }
 
   @override
   void dispose() {
+    _intentDataStreamSubscription.cancel();
     _urlController.dispose();
     yt.close();
     super.dispose();
@@ -94,10 +122,12 @@ class _HomePageState extends State<HomePage> {
                     await Directory(dlDir).create();
                     print('Created directory');
                   }
-                  final path = p.join(dlDir, '${_video.title}.mp3');
                   if (audioInfo != null) {
+                    final path = p.join(dlDir, 'temp1.${audioInfo.container.name}');
+                    final temp = p.join(dlDir, 'temp2.mp3');
+                    final output = p.join(dlDir, '${SafeFilename.encode(_video.title)}.mp3');
                     final stream = yt.videos.streamsClient.get(audioInfo);
-
+                    
                     final file = File(path);
                     final fileStream = file.openWrite();
 
@@ -115,15 +145,41 @@ class _HomePageState extends State<HomePage> {
                     //await stream.pipe(fileStream);
                     //await fileStream.flush();
                     await fileStream.close();
-                    final response = await http.get(_video.thumbnails.highResUrl);
-                    await tagger.writeTagsFromMap(
-                      path: path, 
-                      tags: {
-                        'title': _video.title,
-                        'artist': _video.author,
-                        'artwork': response.bodyBytes
-                      }
-                    );
+                    final request = await HttpClient().getUrl(Uri.parse(_video.thumbnails.highResUrl));
+                    final resposne = await request.close();
+                    final art = p.join(dlDir, 'temp.png');
+                    resposne.pipe(File(art).openWrite());
+                    //final response = await http.get(_video.thumbnails.highResUrl);
+                    
+
+                    var ret = await ffmpeg.execute('-i $path -metadata title="${_video.title}" -metadata artist="${_video.author}" -metadata author_url="${_video.url}" $temp');
+
+                    await File(path).delete();
+
+                    if (ret != 0) {
+                      print('Transcode Error!');
+                      setState(() {
+                        _video = null;
+                        _progress = 0;
+                      });
+                      return;
+                    }
+
+                    ret = await ffmpeg.execute('-i $temp -i $art -map 0:0 -map 1:0 -c copy -id3v2_version 3 -metadata:s:v title="Album cover" -metadata:s:v comment="Cover (Front)" $output');
+
+                    await File(temp).delete();
+                    await File(art).delete();
+
+                    if (ret != 0) {
+                      print('Album Art Error!');
+                      setState(() {
+                        _video = null;
+                        _progress = 0;
+                      });
+                      return;
+                    }
+
+
                     setState(() {
                       _video = null;
                       _progress = 0;
