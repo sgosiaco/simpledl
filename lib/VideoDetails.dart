@@ -4,8 +4,8 @@ import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 class VideoDetails extends StatelessWidget {
   final Video video;
   final Function download;
-  final Function clearVideo;
-  VideoDetails({@required this.video, @required this.download, @required this.clearVideo});
+  final Function cancel;
+  VideoDetails({@required this.video, @required this.download, @required this.cancel});
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +36,7 @@ class VideoDetails extends StatelessWidget {
           ButtonBar(
             alignment: MainAxisAlignment.end,
             children: [
-              FlatButton(
+              TextButton(
                 child: Text(
                   'Download',
                   style: TextStyle(color: Colors.white),
@@ -45,13 +45,13 @@ class VideoDetails extends StatelessWidget {
                   download();
                 },
               ),
-              FlatButton(
+              TextButton(
                 child: Text(
                   'Cancel',
                   style: TextStyle(color: Colors.white),
                 ),
                 onPressed: () {
-                  clearVideo();
+                  cancel();
                 },
               )
             ],

@@ -110,7 +110,10 @@ class _HomePageState extends State<HomePage> {
               VideoDetails(
                 video: _video,
                 download: download,
-                clearVideo: resetState,
+                cancel: () {
+                  _ffmpeg.cancel();
+                  resetState(false);
+                },
               ),
               Status(progress: _progress, operation: _operation, log: _ffmpegLog)
             ],
@@ -120,12 +123,14 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void resetState() {
+  void resetState(bool error) {
     setState(() {
       _video = null;
       _progress = 0;
       _operation = 'Nothing...';
-      _ffmpegLog = '';
+      if (!error) {
+        _ffmpegLog = '';
+      }
       _count = 0;
       _len = 0;
     });
@@ -150,12 +155,18 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> download() async {
+    if (_operation != 'Nothing...') {
+      return;
+    }
     if (await Permission.storage.request().isDenied) {
       return;
     }
+    // Download manifest
+    setState(() {
+      _operation = 'Downloading manifest...';
+    });
     final manifest = await _yt.videos.streamsClient.getManifest(_video.id);
-    final audioInfo = manifest.audioOnly.withHighestBitrate();
-    //final videoInfo = manifest.audio.withHighestBitrate();
+    final audioInfo = manifest.audio.withHighestBitrate(); //manifest.audioOnly.withHighestBitrate();
     final musicDir = await ExtStorage.getExternalStoragePublicDirectory(ExtStorage.DIRECTORY_MUSIC);
     final dlDir = p.join(musicDir, 'simpledl');
     if (!(await Directory(dlDir).exists())) {
@@ -196,6 +207,7 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _progress = 0;
         _operation = 'Converting audio...';
+        _progress = null;
       });
       var ret = await _ffmpeg.execute('-i $path -metadata title="${_video.title}" -metadata artist="${_video.author}" -metadata author_url="${_video.url}" $temp');
       await File(path).delete();
@@ -204,7 +216,8 @@ class _HomePageState extends State<HomePage> {
         print('Transcode Error!');
         await File(temp).delete();
         await File(art).delete();
-        resetState();
+        _ffmpegLog = 'Transcode Error! Please retry!';
+        resetState(true);
         return;
       }
 
@@ -212,6 +225,7 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _progress = 0;
         _operation = 'Adding album art...';
+        _progress = null;
       });
       ret = await _ffmpeg.execute('-i $temp -i $art -map 0:0 -map 1:0 -c copy -id3v2_version 3 -metadata:s:v title="Album cover" -metadata:s:v comment="Cover (Front)" $output');
 
@@ -221,9 +235,12 @@ class _HomePageState extends State<HomePage> {
       if (ret != 0) {
         print('Album Art Error!');
         await File(output).delete();
+        _ffmpegLog = 'Album Art Error! Please retry!';
+        resetState(true);
+        return;
       }
 
-      resetState();
+      resetState(false);
     }
   }
 }
